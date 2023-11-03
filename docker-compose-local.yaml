@@ -1,0 +1,254 @@
+version: '3.5'
+services:
+ zabbix-server:
+  container_name: zabbix-server
+  image: localhost/zabbix/zabbix-server-mysql:alpine-6.4.7
+  ports:
+   - "10051:10051"
+  volumes:
+   - /etc/localtime:/etc/localtime:ro
+#   - /etc/timezone:/etc/timezone:ro 
+#   - dbsocket:/var/run/mysqld/
+   - ./zbx_env/usr/lib/zabbix/alertscripts:/usr/lib/zabbix/alertscripts:ro
+   - ./zbx_env/usr/lib/zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+   - ./zbx_env/var/lib/zabbix/dbscripts:/var/lib/zabbix/dbscripts:ro
+   - ./zbx_env/var/lib/zabbix/export:/var/lib/zabbix/export:rw
+   - ./zbx_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+   - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+   - ./zbx_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+   - ./zbx_env/var/lib/zabbix/mibs:/var/lib/zabbix/mibs:ro
+   - snmptraps:/var/lib/zabbix/snmptraps:rw
+  ulimits:
+#   nproc: 65535
+   nofile:
+    soft: 20000
+    hard: 40000
+  deploy:
+   resources:
+    limits:
+      cpus: '0.70'
+      memory: 1G
+    reservations:
+      cpus: '0.5'
+      memory: 512M
+  env_file:
+   - ./env_vars/.env_db_mysql
+   - ./env_vars/.env_srv
+  secrets:
+   - MYSQL_USER
+   - MYSQL_PASSWORD
+   - MYSQL_ROOT_USER
+   - MYSQL_ROOT_PASSWORD
+#   - client-key.pem
+#   - client-cert.pem
+#   - root-ca.pem
+  depends_on:
+   - mysql-server
+  networks:
+   zbx_net_backend:
+   zbx_net_frontend:
+#  devices:
+#   - "/dev/ttyUSB0:/dev/ttyUSB0"
+  stop_grace_period: 30s
+  sysctls:
+   - net.ipv4.ip_local_port_range=1024 64999
+   - net.ipv4.conf.all.accept_redirects=0
+   - net.ipv4.conf.all.secure_redirects=0
+   - net.ipv4.conf.all.send_redirects=0
+  labels:
+   com.zabbix.description: "Zabbix server with MySQL database support"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "zabbix-server"
+   com.zabbix.dbtype: "mysql"
+   com.zabbix.os: "alpine"
+
+ zabbix-web-nginx-mysql:
+  container_name: zabbix-web-nginx-mysql
+  image: localhost/zabbix/zabbix-web-nginx-mysql:alpine-6.4.7
+  ports:
+   - "8080:8080"
+   - "8443:8443"
+  volumes:
+   - /etc/localtime:/etc/localtime:ro
+#   - /etc/timezone:/etc/timezone:ro
+#   - dbsocket:/var/run/mysqld/
+   - ./zbx_env/etc/ssl/nginx:/etc/ssl/nginx:ro
+   - ./zbx_env/usr/share/zabbix/modules/:/usr/share/zabbix/modules/:ro
+  deploy:
+   resources:
+    limits:
+      cpus: '0.70'
+      memory: 512M
+    reservations:
+      cpus: '0.5'
+      memory: 256M
+  env_file:
+   - ./env_vars/.env_db_mysql
+   - ./env_vars/.env_web
+  secrets:
+   - MYSQL_USER
+   - MYSQL_PASSWORD
+#   - client-key.pem
+#   - client-cert.pem
+#   - root-ca.pem
+  depends_on:
+   - mysql-server
+   - zabbix-server
+  healthcheck:
+   test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+   interval: 10s
+   timeout: 5s
+   retries: 3
+   start_period: 30s
+  networks:
+   zbx_net_backend:
+   zbx_net_frontend:
+  stop_grace_period: 10s
+#  sysctls:
+#   - net.core.somaxconn=65535
+  labels:
+   com.zabbix.description: "Zabbix frontend on Nginx web-server with MySQL database support"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "zabbix-frontend"
+   com.zabbix.webserver: "nginx"
+   com.zabbix.dbtype: "mysql"
+   com.zabbix.os: "alpine"
+
+ zabbix-agent:
+  container_name: zabbix-agent
+  image: localhost/zabbix/zabbix-agent:alpine-6.4.7
+  profiles:
+   - full
+   - all
+  ports:
+   - "10050:10050"
+  volumes:
+   - /etc/localtime:/etc/localtime:ro
+#   - /etc/timezone:/etc/timezone:ro
+   - ./zbx_env/etc/zabbix/zabbix_agentd.d:/etc/zabbix/zabbix_agentd.d:ro
+   - ./zbx_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+   - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+   - ./zbx_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+  deploy:
+   resources:
+    limits:
+      cpus: '0.2'
+      memory: 128M
+    reservations:
+      cpus: '0.1'
+      memory: 64M
+   mode: global
+  env_file:
+   - ./env_vars/.env_agent
+  privileged: true
+  pid: "host"
+  networks:
+   zbx_net_backend:
+  stop_grace_period: 5s
+  labels:
+   com.zabbix.description: "Zabbix agent"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "zabbix-agentd"
+   com.zabbix.os: "alpine"
+
+ zabbix-web-service:
+  container_name: zabbix-web-service
+  image: localhost/zabbix/zabbix-web-service:alpine-6.4.7
+  profiles:
+   - full
+   - all
+  ports:
+   - "10053:10053"
+  volumes:
+   - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+#  security_opt:
+#   - seccomp:./env_vars/chrome_dp.json
+  deploy:
+   resources:
+    limits:
+      cpus: '0.5'
+      memory: 512M
+    reservations:
+      cpus: '0.25'
+      memory: 256M
+  env_file:
+   - ./env_vars/.env_web_service
+  networks:
+   zbx_net_backend:
+  stop_grace_period: 5s
+  labels:
+   com.zabbix.description: "Zabbix web service"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "web-service"
+   com.zabbix.os: "alpine"
+
+ mysql-server:
+  container_name: mysql-server
+  image: localhost/mysql:8.0-oracle
+  #userns_mode: 501
+  command:
+   - mysqld
+   - --character-set-server=utf8mb4
+   - --collation-server=utf8mb4_bin
+# Only during upgrade from versions prior 6.4
+#   - --log_bin_trust_function_creators=1
+# Use TLS encryption for connections to database
+#   - --require-secure-transport
+#   - --ssl-ca=/run/secrets/root-ca.pem
+#   - --ssl-cert=/run/secrets/server-cert.pem
+#   - --ssl-key=/run/secrets/server-key.pem
+  volumes:
+#   - ./zbx_env/var/lib/mysql:/var/lib/mysql:rw
+   - mysql:/var/lib/mysql:rw
+#   - dbsocket:/var/run/mysqld/
+  env_file:
+   - ./env_vars/.env_db_mysql
+  secrets:
+   - MYSQL_USER
+   - MYSQL_PASSWORD
+   - MYSQL_ROOT_PASSWORD
+#   - server-key.pem
+#   - server-cert.pem
+#   - root-ca.pem
+  stop_grace_period: 1m
+  networks:
+   zbx_net_backend:
+
+ db-data-mysql:
+  container_name: db-data-mysql
+  image: loclhost/busybox:1.36
+  volumes:
+   #- ./zbx_env/var/lib/mysql:/var/lib/mysql:rw
+   - mysql:/var/lib/mysql:rw
+  networks:
+   zbx_net_backend:
+
+networks:
+  zbx_net_frontend:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.16.238.0/24
+  zbx_net_backend:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.16.239.0/24
+
+volumes:
+  mysql:
+  snmptraps:
+#  dbsocket:
+
+secrets:
+  MYSQL_USER:
+    file: ./env_vars/.MYSQL_USER
+  MYSQL_PASSWORD:
+    file: ./env_vars/.MYSQL_PASSWORD
+  MYSQL_ROOT_USER:
+    file: ./env_vars/.MYSQL_ROOT_USER
+  MYSQL_ROOT_PASSWORD:
+    file: ./env_vars/.MYSQL_ROOT_PASSWORD
